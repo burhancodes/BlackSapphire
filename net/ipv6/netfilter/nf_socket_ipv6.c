@@ -21,7 +21,6 @@
 #if IS_ENABLED(CONFIG_NF_CONNTRACK)
 #include <net/netfilter/nf_conntrack.h>
 #endif
-
 static int
 extract_icmp6_fields(const struct sk_buff *skb,
 		     unsigned int outside_hdrlen,
@@ -38,36 +37,29 @@ extract_icmp6_fields(const struct sk_buff *skb,
 	u8 inside_nexthdr;
 	__be16 inside_fragoff;
 	int inside_hdrlen;
-
 	icmph = skb_header_pointer(skb, outside_hdrlen,
 				   sizeof(_icmph), &_icmph);
 	if (icmph == NULL)
 		return 1;
-
 	if (icmph->icmp6_type & ICMPV6_INFOMSG_MASK)
 		return 1;
-
 	inside_iph = skb_header_pointer(skb, outside_hdrlen + sizeof(_icmph),
 					sizeof(*ipv6_var), ipv6_var);
 	if (inside_iph == NULL)
 		return 1;
 	inside_nexthdr = inside_iph->nexthdr;
-
 	inside_hdrlen = ipv6_skip_exthdr(skb, outside_hdrlen + sizeof(_icmph) +
 					      sizeof(*ipv6_var),
 					 &inside_nexthdr, &inside_fragoff);
 	if (inside_hdrlen < 0)
 		return 1; /* hjm: Packet has no/incomplete transport layer headers. */
-
 	if (inside_nexthdr != IPPROTO_TCP &&
 	    inside_nexthdr != IPPROTO_UDP)
 		return 1;
-
 	ports = skb_header_pointer(skb, inside_hdrlen,
 				   sizeof(_ports), &_ports);
 	if (ports == NULL)
 		return 1;
-
 	/* the inside IP packet is the one quoted from our side, thus
 	 * its saddr is the local address */
 	*protocol = inside_nexthdr;
@@ -75,10 +67,8 @@ extract_icmp6_fields(const struct sk_buff *skb,
 	*lport = ports[0];
 	*raddr = &inside_iph->daddr;
 	*rport = ports[1];
-
 	return 0;
 }
-
 static struct sock *
 nf_socket_get_sock_v6(struct net *net, struct sk_buff *skb, int doff,
 		      const u8 protocol,
@@ -95,35 +85,30 @@ nf_socket_get_sock_v6(struct net *net, struct sk_buff *skb, int doff,
 		return udp6_lib_lookup(net, saddr, sport, daddr, dport,
 				       in->ifindex);
 	}
-
 	return NULL;
 }
-
 struct sock *nf_sk_lookup_slow_v6(struct net *net, const struct sk_buff *skb,
 				  const struct net_device *indev)
 {
+	struct sock *sk = skb->sk;
 	__be16 dport, sport;
 	const struct in6_addr *daddr = NULL, *saddr = NULL;
 	struct ipv6hdr *iph = ipv6_hdr(skb), ipv6_var;
 	struct sk_buff *data_skb = NULL;
 	int doff = 0;
 	int thoff = 0, tproto;
-
 	tproto = ipv6_find_hdr(skb, &thoff, -1, NULL, NULL);
 	if (tproto < 0) {
 		pr_debug("unable to find transport header in IPv6 packet, dropping\n");
 		return NULL;
 	}
-
 	if (tproto == IPPROTO_UDP || tproto == IPPROTO_TCP) {
 		struct tcphdr _hdr;
 		struct udphdr *hp;
-
 		hp = skb_header_pointer(skb, thoff, tproto == IPPROTO_UDP ?
 					sizeof(*hp) : sizeof(_hdr), &_hdr);
 		if (hp == NULL)
 			return NULL;
-
 		saddr = &iph->saddr;
 		sport = hp->source;
 		daddr = &iph->daddr;
@@ -132,7 +117,6 @@ struct sock *nf_sk_lookup_slow_v6(struct net *net, const struct sk_buff *skb,
 		doff = tproto == IPPROTO_TCP ?
 			thoff + __tcp_hdrlen((struct tcphdr *)hp) :
 			thoff + sizeof(*hp);
-
 	} else if (tproto == IPPROTO_ICMPV6) {
 		if (extract_icmp6_fields(skb, thoff, &tproto, &saddr, &daddr,
 					 &sport, &dport, &ipv6_var))
@@ -140,18 +124,10 @@ struct sock *nf_sk_lookup_slow_v6(struct net *net, const struct sk_buff *skb,
 	} else {
 		return NULL;
 	}
-
-	if (sk)
-		refcount_inc(&sk->sk_refcnt);
-	else
-		sk = nf_socket_get_sock_v6(dev_net(skb->dev), data_skb, doff,
-					   tproto, saddr, daddr, sport, dport,
-					   indev);
-
-	return sk;
+	return nf_socket_get_sock_v6(net, data_skb, doff, tproto, saddr, daddr,
+				     sport, dport, indev);
 }
 EXPORT_SYMBOL_GPL(nf_sk_lookup_slow_v6);
-
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Krisztian Kovacs, Balazs Scheidler");
 MODULE_DESCRIPTION("Netfilter IPv6 socket lookup infrastructure");
